@@ -1,0 +1,52 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SmtpConfig {
+  id       String @id @default(cuid())
+  host     String
+  port     Int
+  user     String
+  password String
+  fromName String
+  fromEmail String
+  secure   Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EmailRecord {
+  id          String   @id @default(cuid())
+  recipient   String
+  subject     String
+  status      String   @default("pending") // pending, sent, failed
+  errorMessage String?
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+}
