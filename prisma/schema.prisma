@@ -28,17 +28,15 @@ model Post {
   updatedAt DateTime @updatedAt
 }
 
-model SmtpConfig {
-  id       String @id @default(cuid())
-  host     String
-  port     Int
-  user     String
-  password String
-  fromName String
-  fromEmail String
-  secure   Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model GmailConfig {
+  id          String   @id @default(cuid())
+  clientId     String
+  clientSecret String
+  refreshToken String
+  fromEmail    String
+  fromName     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model EmailRecord {

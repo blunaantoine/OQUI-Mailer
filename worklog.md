@@ -24,3 +24,30 @@ Stage Summary:
 - Responsive design with mobile-first approach
 - Sticky footer implementation
 
+
+---
+Task ID: 2
+Agent: Main
+Task: Migrate from SMTP to Gmail API
+
+Work Log:
+- Installed googleapis package
+- Updated Prisma schema: replaced SmtpConfig with GmailConfig (clientId, clientSecret, refreshToken, fromEmail, fromName)
+- Pushed updated schema to database
+- Removed old /api/smtp-config route
+- Created /api/gmail/config route (GET/POST/DELETE) with token validation
+- Created /api/gmail/auth-url route to generate OAuth2 authorization URLs
+- Created /api/gmail/exchange route to exchange authorization codes for refresh tokens
+- Rewrote /api/send-email to use Gmail API (google.gmail.users.messages.send) with raw base64url-encoded RFC 2822 messages
+- Rebuilt frontend UI with 3-step OAuth2 wizard dialog (Credentials → Authorize → Confirm)
+- Added Google Cloud Console setup instructions card
+- Added copy-to-clipboard for auth URL and refresh token
+- Verified all interactions via Agent Browser
+
+Stage Summary:
+- Full OAuth2 flow: Client ID/Secret → Auth URL → Code exchange → Refresh token → Send
+- Gmail API integration using googleapis library
+- 3-step setup wizard with visual progress indicators
+- Email history still functional (EmailRecord model unchanged)
+- All lint checks pass
+- Responsive design maintained

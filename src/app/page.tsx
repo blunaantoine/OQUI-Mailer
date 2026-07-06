@@ -1,16 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -24,19 +22,20 @@ import {
   Loader2,
   Eye,
   History,
-  Server,
   RefreshCw,
   Trash2,
+  ExternalLink,
+  Key,
+  Shield,
+  Copy,
+  Check,
 } from 'lucide-react'
 
-interface SmtpConfig {
+interface GmailConfig {
   configured: boolean
-  host?: string
-  port?: number
-  user?: string
-  fromName?: string
   fromEmail?: string
-  secure?: boolean
+  fromName?: string
+  error?: string
 }
 
 interface EmailRecord {
@@ -49,63 +48,47 @@ interface EmailRecord {
   createdAt: string
 }
 
+type SetupStep = 'credentials' | 'authorize' | 'token' | 'done'
+
 export default function Home() {
-  const [smtpConfig, setSmtpConfig] = useState<SmtpConfig | null>(null)
+  const [gmailConfig, setGmailConfig] = useState<GmailConfig | null>(null)
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [recipients, setRecipients] = useState<string[]>([])
   const [newEmail, setNewEmail] = useState('')
   const [subject, setSubject] = useState('Retour de test utilisateur - OQUI')
   const [sending, setSending] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
   const [history, setHistory] = useState<EmailRecord[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
 
-  // SMTP form state
-  const [smtpForm, setSmtpForm] = useState({
-    host: '',
-    port: '587',
-    user: '',
-    password: '',
-    fromName: "L'équipe OQUI",
-    fromEmail: '',
-    secure: false,
-  })
-  const [smtpDialogOpen, setSmtpDialogOpen] = useState(false)
-  const [savingSmtp, setSavingSmtp] = useState(false)
-  const [testingSmtp, setTestingSmtp] = useState(false)
+  // Gmail setup state
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false)
+  const [setupStep, setSetupStep] = useState<SetupStep>('credentials')
+  const [savingConfig, setSavingConfig] = useState(false)
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [fromEmail, setFromEmail] = useState('')
+  const [fromName, setFromName] = useState("L'équipe OQUI")
+  const [authUrl, setAuthUrl] = useState('')
+  const [authCode, setAuthCode] = useState('')
+  const [refreshToken, setRefreshToken] = useState('')
+  const [exchanging, setExchanging] = useState(false)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [generatingUrl, setGeneratingUrl] = useState(false)
 
   const { toast } = useToast()
-  const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  // Fetch SMTP config on mount
-  const fetchSmtpConfig = useCallback(async () => {
+  const fetchGmailConfig = useCallback(async () => {
     try {
-      const res = await fetch('/api/smtp-config')
+      const res = await fetch('/api/gmail/config')
       const data = await res.json()
-      setSmtpConfig(data)
-      if (data.configured) {
-        setSmtpForm({
-          host: data.host || '',
-          port: String(data.port || '587'),
-          user: data.user || '',
-          password: '',
-          fromName: data.fromName || "L'équipe OQUI",
-          fromEmail: data.fromEmail || '',
-          secure: data.secure ?? false,
-        })
-      }
+      setGmailConfig(data)
     } catch {
-      toast({
-        title: 'Erreur',
-        description: 'Impossible de charger la configuration SMTP',
-        variant: 'destructive',
-      })
+      // silent
     } finally {
       setLoadingConfig(false)
     }
-  }, [toast])
+  }, [])
 
-  // Fetch email history
   const fetchHistory = useCallback(async () => {
     setLoadingHistory(true)
     try {
@@ -120,9 +103,124 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    fetchSmtpConfig()
+    fetchGmailConfig()
     fetchHistory()
-  }, [fetchSmtpConfig, fetchHistory])
+  }, [fetchGmailConfig, fetchHistory])
+
+  // Copy to clipboard
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(id)
+    setTimeout(() => setCopied(null), 2000)
+  }
+
+  // Step 1: Generate auth URL
+  const generateAuthUrl = async () => {
+    if (!clientId.trim()) {
+      toast({ title: 'Requis', description: 'Le Client ID est requis', variant: 'destructive' })
+      return
+    }
+    setGeneratingUrl(true)
+    try {
+      const res = await fetch('/api/gmail/auth-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setAuthUrl(data.authUrl)
+        setSetupStep('authorize')
+      } else {
+        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Erreur réseau', variant: 'destructive' })
+    } finally {
+      setGeneratingUrl(false)
+    }
+  }
+
+  // Step 2: Exchange code for token
+  const exchangeCode = async () => {
+    if (!authCode.trim()) {
+      toast({ title: 'Requis', description: 'Le code d\'autorisation est requis', variant: 'destructive' })
+      return
+    }
+    setExchanging(true)
+    try {
+      const res = await fetch('/api/gmail/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId,
+          clientSecret,
+          code: authCode.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setRefreshToken(data.refreshToken)
+        setSetupStep('token')
+      } else {
+        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Erreur réseau', variant: 'destructive' })
+    } finally {
+      setExchanging(false)
+    }
+  }
+
+  // Step 3: Save final config
+  const saveConfig = async () => {
+    if (!clientId || !clientSecret || !refreshToken || !fromEmail) {
+      toast({ title: 'Champs manquants', description: 'Tous les champs sont requis', variant: 'destructive' })
+      return
+    }
+    setSavingConfig(true)
+    try {
+      const res = await fetch('/api/gmail/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, clientSecret, refreshToken, fromEmail, fromName }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        toast({ title: 'Connecté !', description: data.message })
+        setSetupDialogOpen(false)
+        resetSetup()
+        fetchGmailConfig()
+      } else {
+        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
+      }
+    } catch {
+      toast({ title: 'Erreur réseau', variant: 'destructive' })
+    } finally {
+      setSavingConfig(false)
+    }
+  }
+
+  const deleteConfig = async () => {
+    try {
+      await fetch('/api/gmail/config', { method: 'DELETE' })
+      toast({ title: 'Déconnecté' })
+      fetchGmailConfig()
+    } catch {
+      toast({ title: 'Erreur', variant: 'destructive' })
+    }
+  }
+
+  const resetSetup = () => {
+    setSetupStep('credentials')
+    setAuthUrl('')
+    setAuthCode('')
+    setRefreshToken('')
+    setClientId('')
+    setClientSecret('')
+    setFromEmail('')
+    setFromName("L'équipe OQUI")
+  }
 
   // Add recipient
   const addRecipient = () => {
@@ -130,19 +228,11 @@ export default function Home() {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!email) return
     if (!emailRegex.test(email)) {
-      toast({
-        title: 'Email invalide',
-        description: `"${email}" n'est pas une adresse email valide`,
-        variant: 'destructive',
-      })
+      toast({ title: 'Email invalide', description: `"${email}" n'est pas valide`, variant: 'destructive' })
       return
     }
     if (recipients.includes(email)) {
-      toast({
-        title: 'Doublon',
-        description: 'Cet email est déjà dans la liste',
-        variant: 'destructive',
-      })
+      toast({ title: 'Doublon', description: 'Cet email est déjà dans la liste', variant: 'destructive' })
       return
     }
     setRecipients([...recipients, email])
@@ -155,28 +245,16 @@ export default function Home() {
 
   // Send emails
   const sendEmails = async () => {
-    if (!smtpConfig?.configured) {
-      toast({
-        title: 'Configuration requise',
-        description: 'Veuillez d\'abord configurer le serveur SMTP',
-        variant: 'destructive',
-      })
+    if (!gmailConfig?.configured) {
+      toast({ title: 'Configuration requise', description: 'Connectez d\'abord votre compte Gmail', variant: 'destructive' })
       return
     }
     if (recipients.length === 0) {
-      toast({
-        title: 'Destinataires manquants',
-        description: 'Ajoutez au moins un destinataire',
-        variant: 'destructive',
-      })
+      toast({ title: 'Destinataires manquants', description: 'Ajoutez au moins un destinataire', variant: 'destructive' })
       return
     }
     if (!subject.trim()) {
-      toast({
-        title: 'Objet manquant',
-        description: 'Veuillez renseigner l\'objet de l\'email',
-        variant: 'destructive',
-      })
+      toast({ title: 'Objet manquant', variant: 'destructive' })
       return
     }
 
@@ -190,100 +268,34 @@ export default function Home() {
       const data = await res.json()
 
       if (res.ok) {
-        toast({
-          title: 'Emails envoyés',
-          description: data.message,
-        })
+        toast({ title: 'Emails envoyés', description: data.message })
         setRecipients([])
         fetchHistory()
       } else {
-        toast({
-          title: 'Erreur',
-          description: data.error || 'Erreur lors de l\'envoi',
-          variant: 'destructive',
-        })
+        toast({ title: 'Erreur', description: data.error || 'Erreur lors de l\'envoi', variant: 'destructive' })
       }
     } catch {
-      toast({
-        title: 'Erreur réseau',
-        description: 'Impossible de contacter le serveur',
-        variant: 'destructive',
-      })
+      toast({ title: 'Erreur réseau', variant: 'destructive' })
     } finally {
       setSending(false)
     }
   }
 
-  // Save SMTP config
-  const saveSmtpConfig = async () => {
-    if (!smtpForm.host || !smtpForm.port || !smtpForm.user || !smtpForm.password || !smtpForm.fromEmail) {
-      toast({
-        title: 'Champs manquants',
-        description: 'Tous les champs sont requis',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    setSavingSmtp(true)
-    try {
-      const res = await fetch('/api/smtp-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(smtpForm),
-      })
-      const data = await res.json()
-
-      if (res.ok) {
-        toast({
-          title: 'Configuration sauvegardée',
-          description: data.message,
-        })
-        setSmtpDialogOpen(false)
-        fetchSmtpConfig()
-      } else {
-        toast({
-          title: 'Erreur',
-          description: data.error || 'Erreur de sauvegarde',
-          variant: 'destructive',
-        })
-      }
-    } catch {
-      toast({
-        title: 'Erreur réseau',
-        description: 'Impossible de contacter le serveur',
-        variant: 'destructive',
-      })
-    } finally {
-      setSavingSmtp(false)
-    }
-  }
-
-  // Delete SMTP config
-  const deleteSmtpConfig = async () => {
-    try {
-      await fetch('/api/smtp-config', { method: 'DELETE' })
-      toast({ title: 'Configuration supprimée' })
-      fetchSmtpConfig()
-    } catch {
-      toast({
-        title: 'Erreur',
-        description: 'Impossible de supprimer la configuration',
-        variant: 'destructive',
-      })
-    }
-  }
-
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '—'
-    const d = new Date(dateStr)
-    return d.toLocaleString('fr-FR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    return new Date(dateStr).toLocaleString('fr-FR', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
     })
+  }
+
+  const openSetupDialog = () => {
+    resetSetup()
+    if (gmailConfig?.configured && gmailConfig.fromEmail) {
+      setFromEmail(gmailConfig.fromEmail)
+      setFromName(gmailConfig.fromName || "L'équipe OQUI")
+    }
+    setSetupDialogOpen(true)
   }
 
   return (
@@ -297,139 +309,269 @@ export default function Home() {
             </div>
             <div>
               <h1 className="text-lg font-bold leading-tight" style={{ color: '#0b3d2e' }}>OQUI Mailer</h1>
-              <p className="text-xs text-muted-foreground hidden sm:block">Envoi d&apos;emails en masse</p>
+              <p className="text-xs text-muted-foreground hidden sm:block">Envoi d&apos;emails via Gmail API</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {loadingConfig ? (
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            ) : smtpConfig?.configured ? (
+            ) : gmailConfig?.configured ? (
               <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50 gap-1.5">
                 <CheckCircle2 className="h-3 w-3" />
-                SMTP configuré
+                <span className="hidden sm:inline">{gmailConfig.fromEmail}</span>
+                <span className="sm:hidden">Connecté</span>
               </Badge>
             ) : (
               <Badge variant="outline" className="text-amber-700 border-amber-200 bg-amber-50 gap-1.5">
                 <XCircle className="h-3 w-3" />
-                SMTP non configuré
+                Non connecté
               </Badge>
             )}
 
-            <Dialog open={smtpDialogOpen} onOpenChange={setSmtpDialogOpen}>
+            <Dialog open={setupDialogOpen} onOpenChange={(open) => { setSetupDialogOpen(open); if (!open) resetSetup() }}>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2">
+                <Button variant="outline" size="sm" className="gap-2" onClick={openSetupDialog}>
                   <Settings className="h-4 w-4" />
                   <span className="hidden sm:inline">Configuration</span>
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
-                    <Server className="h-5 w-5" />
-                    Configuration SMTP
+                    <Shield className="h-5 w-5" style={{ color: '#0b3d2e' }} />
+                    Connexion Gmail API
                   </DialogTitle>
                   <DialogDescription>
-                    Configurez votre serveur SMTP pour envoyer des emails. Les identifiants sont stockés localement.
+                    Connectez votre compte Google pour envoyer des emails via l&apos;API Gmail.
                   </DialogDescription>
                 </DialogHeader>
 
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="smtp-host">Hôte</Label>
-                      <Input
-                        id="smtp-host"
-                        placeholder="smtp.gmail.com"
-                        value={smtpForm.host}
-                        onChange={(e) => setSmtpForm({ ...smtpForm, host: e.target.value })}
-                      />
+                {/* Step indicators */}
+                <div className="flex items-center gap-2 mb-2">
+                  {([
+                    { id: 'credentials', label: 'Identifiants', icon: Key },
+                    { id: 'authorize', label: 'Autoriser', icon: ExternalLink },
+                    { id: 'token', label: 'Confirmer', icon: CheckCircle2 },
+                  ] as const).map((step, idx) => (
+                    <div key={step.id} className="flex items-center gap-2 flex-1">
+                      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                        setupStep === step.id
+                          ? 'text-white'
+                          : ['credentials', 'authorize', 'token'].indexOf(setupStep) > idx
+                          ? 'text-emerald-700 bg-emerald-50'
+                          : 'text-muted-foreground bg-muted'
+                      }`} style={setupStep === step.id ? { backgroundColor: '#0b3d2e' } : undefined}>
+                        <step.icon className="h-3 w-3" />
+                        <span className="hidden sm:inline">{step.label}</span>
+                      </div>
+                      {idx < 2 && (
+                        <div className={`h-px flex-1 ${['credentials', 'authorize', 'token'].indexOf(setupStep) > idx ? 'bg-emerald-300' : 'bg-border'}`} />
+                      )}
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="smtp-port">Port</Label>
-                      <Input
-                        id="smtp-port"
-                        placeholder="587"
-                        value={smtpForm.port}
-                        onChange={(e) => setSmtpForm({ ...smtpForm, port: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-user">Identifiant</Label>
-                    <Input
-                      id="smtp-user"
-                      placeholder="votre@email.com"
-                      value={smtpForm.user}
-                      onChange={(e) => setSmtpForm({ ...smtpForm, user: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="smtp-password">Mot de passe</Label>
-                    <Input
-                      id="smtp-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={smtpForm.password}
-                      onChange={(e) => setSmtpForm({ ...smtpForm, password: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {smtpForm.host?.includes('gmail') && 'Utilisez un mot de passe d\'application Google'}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="space-y-0.5">
-                      <Label className="text-sm">Connexion sécurisée (SSL/TLS)</Label>
-                      <p className="text-xs text-muted-foreground">Port 465 = activé, Port 587 = désactivé</p>
-                    </div>
-                    <Switch
-                      checked={smtpForm.secure}
-                      onCheckedChange={(checked) => setSmtpForm({ ...smtpForm, secure: checked })}
-                    />
-                  </div>
-
-                  <Separator />
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="from-name">Nom de l&apos;expéditeur</Label>
-                      <Input
-                        id="from-name"
-                        placeholder="L'équipe OQUI"
-                        value={smtpForm.fromName}
-                        onChange={(e) => setSmtpForm({ ...smtpForm, fromName: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="from-email">Email de l&apos;expéditeur</Label>
-                      <Input
-                        id="from-email"
-                        placeholder="contact@oqui.fr"
-                        value={smtpForm.fromEmail}
-                        onChange={(e) => setSmtpForm({ ...smtpForm, fromEmail: e.target.value })}
-                      />
-                    </div>
-                  </div>
+                  ))}
                 </div>
 
-                <DialogFooter className="flex justify-between">
-                  {smtpConfig?.configured && (
-                    <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={deleteSmtpConfig}>
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Supprimer
-                    </Button>
-                  )}
-                  <div className="flex gap-2 ml-auto">
-                    <Button variant="outline" onClick={() => setSmtpDialogOpen(false)}>Annuler</Button>
-                    <Button onClick={saveSmtpConfig} disabled={savingSmtp} style={{ backgroundColor: '#0b3d2e' }} className="text-white hover:opacity-90">
-                      {savingSmtp && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                      Enregistrer
+                {/* Step 1: Credentials */}
+                {setupStep === 'credentials' && (
+                  <div className="space-y-4 py-2">
+                    <Card className="border-blue-100 bg-blue-50/50">
+                      <CardContent className="p-4 text-sm space-y-2">
+                        <p className="font-medium text-blue-900">Avant de commencer</p>
+                        <ol className="list-decimal list-inside space-y-1 text-blue-800 text-xs">
+                          <li>Allez sur la <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Cloud Console</a></li>
+                          <li>Créez un projet et activez la <strong>Gmail API</strong></li>
+                          <li>Créez un identifiant OAuth 2.0 (Application de bureau)</li>
+                          <li>Copiez le <strong>Client ID</strong> et le <strong>Client Secret</strong></li>
+                        </ol>
+                      </CardContent>
+                    </Card>
+
+                    <div className="grid gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="client-id">Client ID</Label>
+                        <Input
+                          id="client-id"
+                          placeholder="xxxx.apps.googleusercontent.com"
+                          value={clientId}
+                          onChange={(e) => setClientId(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="client-secret">Client Secret</Label>
+                        <Input
+                          id="client-secret"
+                          type="password"
+                          placeholder="GOCSPX-xxxxx"
+                          value={clientSecret}
+                          onChange={(e) => setClientSecret(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={generateAuthUrl}
+                      disabled={generatingUrl || !clientId.trim()}
+                      className="w-full text-white gap-2"
+                      style={{ backgroundColor: '#0b3d2e' }}
+                    >
+                      {generatingUrl ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+                      Générer le lien d&apos;autorisation
                     </Button>
                   </div>
-                </DialogFooter>
+                )}
+
+                {/* Step 2: Authorize */}
+                {setupStep === 'authorize' && (
+                  <div className="space-y-4 py-2">
+                    <Card className="border-amber-100 bg-amber-50/50">
+                      <CardContent className="p-4 text-sm space-y-2">
+                        <p className="font-medium text-amber-900">Étape 2 : Autorisez l&apos;application</p>
+                        <ol className="list-decimal list-inside space-y-1 text-amber-800 text-xs">
+                          <li>Cliquez sur le bouton ci-dessous pour ouvrir la page Google</li>
+                          <li>Connectez-vous et autorisez l&apos;accès à Gmail</li>
+                          <li>Vous serez redirigé vers une page avec une URL contenant <code className="bg-amber-100 px-1 rounded">?code=...</code></li>
+                          <li>Copiez la valeur du paramètre <code className="bg-amber-100 px-1 rounded">code</code> (tout ce qui suit <code className="bg-amber-100 px-1 rounded">code=</code> jusqu&apos;au <code className="bg-amber-100 px-1 rounded">&amp;</code> ou la fin)</li>
+                        </ol>
+                      </CardContent>
+                    </Card>
+
+                    <div className="space-y-2">
+                      <Label>Lien d&apos;autorisation</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          readOnly
+                          value={authUrl}
+                          className="text-xs font-mono"
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={() => copyToClipboard(authUrl, 'url')}
+                        >
+                          {copied === 'url' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                      <a
+                        href={authUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block w-full"
+                      >
+                        <Button className="w-full text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
+                          <ExternalLink className="h-4 w-4" />
+                          Ouvrir la page d&apos;autorisation Google
+                        </Button>
+                      </a>
+                    </div>
+
+                    <div className="space-y-2 pt-2">
+                      <Label htmlFor="auth-code">Code d&apos;autorisation</Label>
+                      <textarea
+                        id="auth-code"
+                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none font-mono"
+                        placeholder="Collez le code d'autorisation ici (la valeur du paramètre code=...)"
+                        value={authCode}
+                        onChange={(e) => setAuthCode(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={() => setSetupStep('credentials')} className="gap-2">
+                        Retour
+                      </Button>
+                      <Button
+                        onClick={exchangeCode}
+                        disabled={exchanging || !authCode.trim()}
+                        className="flex-1 text-white gap-2"
+                        style={{ backgroundColor: '#0b3d2e' }}
+                      >
+                        {exchanging ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
+                        Échanger le code contre un token
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Token confirmation */}
+                {setupStep === 'token' && (
+                  <div className="space-y-4 py-2">
+                    <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-50 border border-emerald-200">
+                      <CheckCircle2 className="h-8 w-8 text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="font-medium text-emerald-900">Token obtenu avec succès !</p>
+                        <p className="text-xs text-emerald-700">Le refresh token a été généré. Configurez les derniers détails ci-dessous.</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Refresh Token</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          readOnly
+                          value={refreshToken}
+                          className="text-xs font-mono"
+                          type="password"
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={() => copyToClipboard(refreshToken, 'token')}
+                        >
+                          {copied === 'token' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="from-name">Nom de l&apos;expéditeur</Label>
+                        <Input
+                          id="from-name"
+                          placeholder="L'équipe OQUI"
+                          value={fromName}
+                          onChange={(e) => setFromName(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="from-email">Email de l&apos;expéditeur</Label>
+                        <Input
+                          id="from-email"
+                          placeholder="contact@oqui.fr"
+                          value={fromEmail}
+                          onChange={(e) => setFromEmail(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={() => setSetupStep('authorize')} className="gap-2">
+                        Retour
+                      </Button>
+                      <Button
+                        onClick={saveConfig}
+                        disabled={savingConfig || !fromEmail.trim()}
+                        className="flex-1 text-white gap-2"
+                        style={{ backgroundColor: '#0b3d2e' }}
+                      >
+                        {savingConfig ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                        Enregistrer et connecter
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Delete config footer */}
+                {gmailConfig?.configured && (
+                  <DialogFooter className="mt-4 pt-4 border-t">
+                    <Button variant="outline" size="sm" className="text-destructive hover:text-destructive ml-auto" onClick={deleteConfig}>
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Déconnecter
+                    </Button>
+                  </DialogFooter>
+                )}
               </DialogContent>
             </Dialog>
           </div>
@@ -457,24 +599,25 @@ export default function Home() {
 
           {/* Compose Tab */}
           <TabsContent value="compose" className="space-y-6">
-            {/* SMTP Warning */}
-            {!loadingConfig && !smtpConfig?.configured && (
+            {/* Not connected warning */}
+            {!loadingConfig && !gmailConfig?.configured && (
               <Card className="border-amber-200 bg-amber-50">
-                <CardContent className="flex items-center gap-3 p-4">
+                <CardContent className="flex items-start sm:items-center gap-3 p-4 flex-col sm:flex-row">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100">
-                    <Settings className="h-5 w-5 text-amber-600" />
+                    <Shield className="h-5 w-5 text-amber-600" />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-amber-800">Configuration SMTP requise</p>
-                    <p className="text-xs text-amber-600">Configurez votre serveur SMTP avant d&apos;envoyer des emails.</p>
+                    <p className="text-sm font-medium text-amber-800">Connexion Gmail requise</p>
+                    <p className="text-xs text-amber-600">Connectez votre compte Google via l&apos;API Gmail pour envoyer des emails.</p>
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setSmtpDialogOpen(true)}
-                    className="border-amber-300 text-amber-700 hover:bg-amber-100"
+                    onClick={openSetupDialog}
+                    className="border-amber-300 text-amber-700 hover:bg-amber-100 shrink-0"
                   >
-                    Configurer
+                    <Shield className="h-4 w-4 mr-1" />
+                    Connecter
                   </Button>
                 </CardContent>
               </Card>
@@ -494,12 +637,7 @@ export default function Home() {
                         placeholder="email@exemple.com"
                         value={newEmail}
                         onChange={(e) => setNewEmail(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            addRecipient()
-                          }
-                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRecipient() } }}
                       />
                       <Button
                         variant="outline"
@@ -515,17 +653,10 @@ export default function Home() {
                     {recipients.length > 0 && (
                       <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1">
                         {recipients.map((email) => (
-                          <Badge
-                            key={email}
-                            variant="secondary"
-                            className="gap-1.5 py-1.5 px-3"
-                          >
+                          <Badge key={email} variant="secondary" className="gap-1.5 py-1.5 px-3">
                             <Mail className="h-3 w-3" />
                             {email}
-                            <button
-                              onClick={() => removeRecipient(email)}
-                              className="ml-1 rounded-full hover:bg-muted-foreground/20 p-0.5"
-                            >
+                            <button onClick={() => removeRecipient(email)} className="ml-1 rounded-full hover:bg-muted-foreground/20 p-0.5">
                               <X className="h-3 w-3" />
                             </button>
                           </Badge>
@@ -569,7 +700,7 @@ export default function Home() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium">Retour de test utilisateur - OQUI</p>
-                          <p className="text-xs text-muted-foreground">Modèle OQUI prédéfini avec CTA</p>
+                          <p className="text-xs text-muted-foreground">Modèle OQUI prédéfini via Gmail API</p>
                         </div>
                         <Badge variant="outline" className="shrink-0">Prêt</Badge>
                       </div>
@@ -582,7 +713,7 @@ export default function Home() {
                     <div className="flex items-center gap-3">
                       <Button
                         onClick={sendEmails}
-                        disabled={sending || !smtpConfig?.configured || recipients.length === 0}
+                        disabled={sending || !gmailConfig?.configured || recipients.length === 0}
                         className="flex-1 text-white gap-2 h-11"
                         style={{ backgroundColor: '#0b3d2e' }}
                       >
@@ -593,12 +724,7 @@ export default function Home() {
                         )}
                         {sending ? 'Envoi en cours...' : `Envoyer à ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}`}
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-11 w-11 shrink-0"
-                        onClick={() => setShowPreview(!showPreview)}
-                      >
+                      <Button variant="outline" size="icon" className="h-11 w-11 shrink-0" onClick={() => document.getElementById('preview-card')?.scrollIntoView({ behavior: 'smooth' })}>
                         <Eye className="h-4 w-4" />
                       </Button>
                     </div>
@@ -607,7 +733,7 @@ export default function Home() {
               </div>
 
               {/* Right: Preview */}
-              <Card className="lg:sticky lg:top-24">
+              <Card className="lg:sticky lg:top-24" id="preview-card">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
                     <CardTitle className="text-base">Aperçu de l&apos;email</CardTitle>
@@ -621,7 +747,6 @@ export default function Home() {
                 <CardContent>
                   <div className="rounded-lg border overflow-hidden bg-muted/20" style={{ minHeight: 500 }}>
                     <iframe
-                      ref={iframeRef}
                       srcDoc={OQUI_EMAIL_HTML}
                       title="Email Preview"
                       className="w-full border-0"
@@ -702,7 +827,7 @@ export default function Home() {
       <footer className="mt-auto border-t bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            OQUI Mailer &mdash; Outil d&apos;envoi d&apos;emails
+            OQUI Mailer &mdash; Gmail API
           </p>
           <a
             href="https://oqui.duckdns.org"
@@ -718,7 +843,6 @@ export default function Home() {
   )
 }
 
-// Inline the email template for the iframe preview
 const OQUI_EMAIL_HTML = `<!DOCTYPE html>
 <html>
 <head>

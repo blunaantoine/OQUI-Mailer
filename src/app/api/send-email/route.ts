@@ -1,7 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
-import nodemailer from "nodemailer";
+import { google } from "googleapis";
 import { db } from "@/lib/db";
 import { OQUI_EMAIL_TEMPLATE } from "@/lib/email-template";
+
+// Helper: refresh access token
+async function getGmailClient() {
+  const configs = await db.gmailConfig.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+  if (configs.length === 0) return null;
+
+  const config = configs[0];
+  const oauth2Client = new google.auth.OAuth2(
+    config.clientId,
+    config.clientSecret
+  );
+  oauth2Client.setCredentials({ refresh_token: config.refreshToken });
+
+  return { oauth2Client, config };
+}
+
+async function getAccessToken(oauth2Client: ReturnType<typeof google.auth.OAuth2>) {
+  const { credential } = await oauth2Client.refreshAccessToken();
+  return credential.access_token as string;
+}
+
+function buildRawEmail(to: string, subject: string, fromName: string, fromEmail: string, html: string): string {
+  const headers = [
+    `From: ${fromName} <${fromEmail}>`,
+    `To: ${to}`,
+    `Subject: =?utf-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`,
+    "Content-Type: text/html; charset=utf-8",
+    "MIME-Version: 1.0",
+  ];
+  const email = `${headers.join("\r\n")}\r\n\r\n${html}`;
+  return Buffer.from(email).toString("base64url");
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,42 +67,35 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Get SMTP config from DB
-    const smtpConfigs = await db.smtpConfig.findMany();
-    if (smtpConfigs.length === 0) {
+    // Get Gmail config
+    const gmailSetup = await getGmailClient();
+    if (!gmailSetup) {
       return NextResponse.json(
-        { error: "Aucune configuration SMTP trouvée. Veuillez d'abord configurer le SMTP." },
+        { error: "Aucune configuration Gmail trouvée. Veuillez d'abord connecter votre compte Gmail." },
         { status: 400 }
       );
     }
 
-    const config = smtpConfigs[smtpConfigs.length - 1]; // use latest
+    const { oauth2Client, config } = gmailSetup;
+    const accessToken = await getAccessToken(oauth2Client);
 
-    // Create transporter
-    const transporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      auth: {
-        user: config.user,
-        pass: config.password,
-      },
-    });
-
-    // Verify connection
-    await transporter.verify();
-
-    const from = `${config.fromName} <${config.fromEmail}>`;
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
     const results: { email: string; status: string; error?: string }[] = [];
 
     // Send to each recipient
     for (const recipient of recipients) {
       try {
-        await transporter.sendMail({
-          from,
-          to: recipient,
+        const raw = buildRawEmail(
+          recipient,
           subject,
-          html: OQUI_EMAIL_TEMPLATE,
+          config.fromName,
+          config.fromEmail,
+          OQUI_EMAIL_TEMPLATE
+        );
+
+        await gmail.users.messages.send({
+          userId: "me",
+          requestBody: { raw },
         });
 
         await db.emailRecord.create({
