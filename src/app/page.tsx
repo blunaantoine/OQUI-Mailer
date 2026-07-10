@@ -27,12 +27,14 @@ import {
   ExternalLink,
   Key,
   Shield,
-  Copy,
-  Check,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react'
 
 interface GmailConfig {
   configured: boolean
+  callbackDone?: boolean
+  message?: string
   fromEmail?: string
   fromName?: string
   error?: string
@@ -48,7 +50,7 @@ interface EmailRecord {
   createdAt: string
 }
 
-type SetupStep = 'credentials' | 'authorize' | 'token' | 'done'
+type SetupStep = 'credentials' | 'done'
 
 export default function Home() {
   const [gmailConfig, setGmailConfig] = useState<GmailConfig | null>(null)
@@ -60,20 +62,15 @@ export default function Home() {
   const [history, setHistory] = useState<EmailRecord[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
 
-  // Gmail setup state
+  // Setup state
   const [setupDialogOpen, setSetupDialogOpen] = useState(false)
   const [setupStep, setSetupStep] = useState<SetupStep>('credentials')
   const [savingConfig, setSavingConfig] = useState(false)
+  const [generatingUrl, setGeneratingUrl] = useState(false)
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [fromEmail, setFromEmail] = useState('')
   const [fromName, setFromName] = useState("L'équipe OQUI")
-  const [authUrl, setAuthUrl] = useState('')
-  const [authCode, setAuthCode] = useState('')
-  const [refreshToken, setRefreshToken] = useState('')
-  const [exchanging, setExchanging] = useState(false)
-  const [copied, setCopied] = useState<string | null>(null)
-  const [generatingUrl, setGeneratingUrl] = useState(false)
 
   const { toast } = useToast()
 
@@ -82,6 +79,11 @@ export default function Home() {
       const res = await fetch('/api/gmail/config')
       const data = await res.json()
       setGmailConfig(data)
+      // If callback just completed, open dialog on finalize step
+      if (data.callbackDone) {
+        setSetupStep('done')
+        setSetupDialogOpen(true)
+      }
     } catch {
       // silent
     } finally {
@@ -107,17 +109,10 @@ export default function Home() {
     fetchHistory()
   }, [fetchGmailConfig, fetchHistory])
 
-  // Copy to clipboard
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(id)
-    setTimeout(() => setCopied(null), 2000)
-  }
-
-  // Step 1: Generate auth URL
-  const generateAuthUrl = async () => {
-    if (!clientId.trim()) {
-      toast({ title: 'Requis', description: 'Le Client ID est requis', variant: 'destructive' })
+  // Step 1: Start OAuth flow
+  const startOAuth = async () => {
+    if (!clientId.trim() || !clientSecret.trim()) {
+      toast({ title: 'Requis', description: 'Client ID et Client Secret sont requis', variant: 'destructive' })
       return
     }
     setGeneratingUrl(true)
@@ -125,12 +120,18 @@ export default function Home() {
       const res = await fetch('/api/gmail/auth-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId }),
+        body: JSON.stringify({ clientId: clientId.trim(), clientSecret: clientSecret.trim() }),
       })
       const data = await res.json()
       if (res.ok) {
-        setAuthUrl(data.authUrl)
-        setSetupStep('authorize')
+        // Open auth URL in new tab
+        window.open(data.authUrl, '_blank')
+        toast({
+          title: 'Fenêtre ouverte',
+          description: 'Autorisez l\'accès Gmail dans la nouvelle fenêtre, puis revenez ici.',
+          duration: 8000,
+        })
+        setSetupDialogOpen(false)
       } else {
         toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
       }
@@ -141,41 +142,10 @@ export default function Home() {
     }
   }
 
-  // Step 2: Exchange code for token
-  const exchangeCode = async () => {
-    if (!authCode.trim()) {
-      toast({ title: 'Requis', description: 'Le code d\'autorisation est requis', variant: 'destructive' })
-      return
-    }
-    setExchanging(true)
-    try {
-      const res = await fetch('/api/gmail/exchange', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientId,
-          clientSecret,
-          code: authCode.trim(),
-        }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setRefreshToken(data.refreshToken)
-        setSetupStep('token')
-      } else {
-        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
-      }
-    } catch {
-      toast({ title: 'Erreur réseau', variant: 'destructive' })
-    } finally {
-      setExchanging(false)
-    }
-  }
-
-  // Step 3: Save final config
-  const saveConfig = async () => {
-    if (!clientId || !clientSecret || !refreshToken || !fromEmail) {
-      toast({ title: 'Champs manquants', description: 'Tous les champs sont requis', variant: 'destructive' })
+  // Step 2: Finalize after callback
+  const finalizeConfig = async () => {
+    if (!fromEmail.trim()) {
+      toast({ title: 'Requis', description: 'L\'email de l\'expéditeur est requis', variant: 'destructive' })
       return
     }
     setSavingConfig(true)
@@ -183,7 +153,11 @@ export default function Home() {
       const res = await fetch('/api/gmail/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, clientSecret, refreshToken, fromEmail, fromName }),
+        body: JSON.stringify({
+          finalize: true,
+          fromEmail: fromEmail.trim(),
+          fromName: fromName.trim() || "L'équipe OQUI",
+        }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -213,16 +187,12 @@ export default function Home() {
 
   const resetSetup = () => {
     setSetupStep('credentials')
-    setAuthUrl('')
-    setAuthCode('')
-    setRefreshToken('')
     setClientId('')
     setClientSecret('')
     setFromEmail('')
     setFromName("L'équipe OQUI")
   }
 
-  // Add recipient
   const addRecipient = () => {
     const email = newEmail.trim()
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -243,7 +213,6 @@ export default function Home() {
     setRecipients(recipients.filter((r) => r !== email))
   }
 
-  // Send emails
   const sendEmails = async () => {
     if (!gmailConfig?.configured) {
       toast({ title: 'Configuration requise', description: 'Connectez d\'abord votre compte Gmail', variant: 'destructive' })
@@ -289,15 +258,6 @@ export default function Home() {
     })
   }
 
-  const openSetupDialog = () => {
-    resetSetup()
-    if (gmailConfig?.configured && gmailConfig.fromEmail) {
-      setFromEmail(gmailConfig.fromEmail)
-      setFromName(gmailConfig.fromName || "L'équipe OQUI")
-    }
-    setSetupDialogOpen(true)
-  }
-
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50">
       {/* Header */}
@@ -331,46 +291,23 @@ export default function Home() {
 
             <Dialog open={setupDialogOpen} onOpenChange={(open) => { setSetupDialogOpen(open); if (!open) resetSetup() }}>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2" onClick={openSetupDialog}>
+                <Button variant="outline" size="sm" className="gap-2" onClick={() => { resetSetup(); if (gmailConfig?.callbackDone) setSetupStep('done') }}>
                   <Settings className="h-4 w-4" />
                   <span className="hidden sm:inline">Configuration</span>
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                     <Shield className="h-5 w-5" style={{ color: '#0b3d2e' }} />
-                    Connexion Gmail API
+                    Connexion Gmail
                   </DialogTitle>
                   <DialogDescription>
-                    Connectez votre compte Google pour envoyer des emails via l&apos;API Gmail.
+                    {setupStep === 'credentials'
+                      ? 'Renseignez vos identifiants Google Cloud pour démarrer.'
+                      : 'Finalisez la configuration de votre compte d\'envoi.'}
                   </DialogDescription>
                 </DialogHeader>
-
-                {/* Step indicators */}
-                <div className="flex items-center gap-2 mb-2">
-                  {([
-                    { id: 'credentials', label: 'Identifiants', icon: Key },
-                    { id: 'authorize', label: 'Autoriser', icon: ExternalLink },
-                    { id: 'token', label: 'Confirmer', icon: CheckCircle2 },
-                  ] as const).map((step, idx) => (
-                    <div key={step.id} className="flex items-center gap-2 flex-1">
-                      <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                        setupStep === step.id
-                          ? 'text-white'
-                          : ['credentials', 'authorize', 'token'].indexOf(setupStep) > idx
-                          ? 'text-emerald-700 bg-emerald-50'
-                          : 'text-muted-foreground bg-muted'
-                      }`} style={setupStep === step.id ? { backgroundColor: '#0b3d2e' } : undefined}>
-                        <step.icon className="h-3 w-3" />
-                        <span className="hidden sm:inline">{step.label}</span>
-                      </div>
-                      {idx < 2 && (
-                        <div className={`h-px flex-1 ${['credentials', 'authorize', 'token'].indexOf(setupStep) > idx ? 'bg-emerald-300' : 'bg-border'}`} />
-                      )}
-                    </div>
-                  ))}
-                </div>
 
                 {/* Step 1: Credentials */}
                 {setupStep === 'credentials' && (
@@ -379,149 +316,54 @@ export default function Home() {
                       <CardContent className="p-4 text-sm space-y-2">
                         <p className="font-medium text-blue-900">Avant de commencer</p>
                         <ol className="list-decimal list-inside space-y-1 text-blue-800 text-xs">
-                          <li>Allez sur la <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Cloud Console</a></li>
-                          <li>Créez un projet et activez la <strong>Gmail API</strong></li>
-                          <li>Créez un identifiant OAuth 2.0 (Application de bureau)</li>
-                          <li>Copiez le <strong>Client ID</strong> et le <strong>Client Secret</strong></li>
+                          <li>Allez sur la <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Cloud Console</a></li>
+                          <li>Activez la <strong>Gmail API</strong></li>
+                          <li>Créez un <strong>OAuth 2.0 Client ID</strong> (type Desktop app)</li>
+                          <li>Ajoutez <code className="bg-blue-100 px-1 rounded text-xs">https://oqui-mailer.vercel.app/api/gmail/callback</code> dans les URI de redirection autorisés</li>
                         </ol>
                       </CardContent>
                     </Card>
 
-                    <div className="grid gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="client-id">Client ID</Label>
-                        <Input
-                          id="client-id"
-                          placeholder="xxxx.apps.googleusercontent.com"
-                          value={clientId}
-                          onChange={(e) => setClientId(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="client-secret">Client Secret</Label>
-                        <Input
-                          id="client-secret"
-                          type="password"
-                          placeholder="GOCSPX-xxxxx"
-                          value={clientSecret}
-                          onChange={(e) => setClientSecret(e.target.value)}
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="client-id">Client ID</Label>
+                      <Input
+                        id="client-id"
+                        placeholder="xxxx.apps.googleusercontent.com"
+                        value={clientId}
+                        onChange={(e) => setClientId(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="client-secret">Client Secret</Label>
+                      <Input
+                        id="client-secret"
+                        type="password"
+                        placeholder="GOCSPX-xxxxx"
+                        value={clientSecret}
+                        onChange={(e) => setClientSecret(e.target.value)}
+                      />
                     </div>
 
                     <Button
-                      onClick={generateAuthUrl}
-                      disabled={generatingUrl || !clientId.trim()}
+                      onClick={startOAuth}
+                      disabled={generatingUrl || !clientId.trim() || !clientSecret.trim()}
                       className="w-full text-white gap-2"
                       style={{ backgroundColor: '#0b3d2e' }}
                     >
                       {generatingUrl ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-                      Générer le lien d&apos;autorisation
+                      Se connecter avec Google
                     </Button>
                   </div>
                 )}
 
-                {/* Step 2: Authorize */}
-                {setupStep === 'authorize' && (
-                  <div className="space-y-4 py-2">
-                    <Card className="border-amber-100 bg-amber-50/50">
-                      <CardContent className="p-4 text-sm space-y-2">
-                        <p className="font-medium text-amber-900">Étape 2 : Autorisez l&apos;application</p>
-                        <ol className="list-decimal list-inside space-y-1 text-amber-800 text-xs">
-                          <li>Cliquez sur le bouton ci-dessous pour ouvrir la page Google</li>
-                          <li>Connectez-vous et autorisez l&apos;accès à Gmail</li>
-                          <li>Vous serez redirigé vers une page avec une URL contenant <code className="bg-amber-100 px-1 rounded">?code=...</code></li>
-                          <li>Copiez la valeur du paramètre <code className="bg-amber-100 px-1 rounded">code</code> (tout ce qui suit <code className="bg-amber-100 px-1 rounded">code=</code> jusqu&apos;au <code className="bg-amber-100 px-1 rounded">&amp;</code> ou la fin)</li>
-                        </ol>
-                      </CardContent>
-                    </Card>
-
-                    <div className="space-y-2">
-                      <Label>Lien d&apos;autorisation</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          readOnly
-                          value={authUrl}
-                          className="text-xs font-mono"
-                        />
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={() => copyToClipboard(authUrl, 'url')}
-                        >
-                          {copied === 'url' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                        </Button>
-                      </div>
-                      <a
-                        href={authUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block w-full"
-                      >
-                        <Button className="w-full text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
-                          <ExternalLink className="h-4 w-4" />
-                          Ouvrir la page d&apos;autorisation Google
-                        </Button>
-                      </a>
-                    </div>
-
-                    <div className="space-y-2 pt-2">
-                      <Label htmlFor="auth-code">Code d&apos;autorisation</Label>
-                      <textarea
-                        id="auth-code"
-                        className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none font-mono"
-                        placeholder="Collez le code d'autorisation ici (la valeur du paramètre code=...)"
-                        value={authCode}
-                        onChange={(e) => setAuthCode(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="flex gap-2">
-                      <Button variant="outline" onClick={() => setSetupStep('credentials')} className="gap-2">
-                        Retour
-                      </Button>
-                      <Button
-                        onClick={exchangeCode}
-                        disabled={exchanging || !authCode.trim()}
-                        className="flex-1 text-white gap-2"
-                        style={{ backgroundColor: '#0b3d2e' }}
-                      >
-                        {exchanging ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
-                        Échanger le code contre un token
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Step 3: Token confirmation */}
-                {setupStep === 'token' && (
+                {/* Step 2: Finalize */}
+                {setupStep === 'done' && (
                   <div className="space-y-4 py-2">
                     <div className="flex items-center gap-3 p-4 rounded-lg bg-emerald-50 border border-emerald-200">
                       <CheckCircle2 className="h-8 w-8 text-emerald-600 shrink-0" />
                       <div>
-                        <p className="font-medium text-emerald-900">Token obtenu avec succès !</p>
-                        <p className="text-xs text-emerald-700">Le refresh token a été généré. Configurez les derniers détails ci-dessous.</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Refresh Token</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          readOnly
-                          value={refreshToken}
-                          className="text-xs font-mono"
-                          type="password"
-                        />
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={() => copyToClipboard(refreshToken, 'token')}
-                        >
-                          {copied === 'token' ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                        </Button>
+                        <p className="font-medium text-emerald-900">Compte Google autorisé !</p>
+                        <p className="text-xs text-emerald-700">Configurez l&apos;expéditeur et sauvegardez.</p>
                       </div>
                     </div>
 
@@ -546,20 +388,15 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
-                      <Button variant="outline" onClick={() => setSetupStep('authorize')} className="gap-2">
-                        Retour
-                      </Button>
-                      <Button
-                        onClick={saveConfig}
-                        disabled={savingConfig || !fromEmail.trim()}
-                        className="flex-1 text-white gap-2"
-                        style={{ backgroundColor: '#0b3d2e' }}
-                      >
-                        {savingConfig ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                        Enregistrer et connecter
-                      </Button>
-                    </div>
+                    <Button
+                      onClick={finalizeConfig}
+                      disabled={savingConfig || !fromEmail.trim()}
+                      className="w-full text-white gap-2"
+                      style={{ backgroundColor: '#0b3d2e' }}
+                    >
+                      {savingConfig ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Enregistrer et activer
+                    </Button>
                   </div>
                 )}
 
@@ -599,7 +436,6 @@ export default function Home() {
 
           {/* Compose Tab */}
           <TabsContent value="compose" className="space-y-6">
-            {/* Not connected warning */}
             {!loadingConfig && !gmailConfig?.configured && (
               <Card className="border-amber-200 bg-amber-50">
                 <CardContent className="flex items-start sm:items-center gap-3 p-4 flex-col sm:flex-row">
@@ -613,7 +449,7 @@ export default function Home() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={openSetupDialog}
+                    onClick={() => setSetupDialogOpen(true)}
                     className="border-amber-300 text-amber-700 hover:bg-amber-100 shrink-0"
                   >
                     <Shield className="h-4 w-4 mr-1" />
