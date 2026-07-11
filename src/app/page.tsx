@@ -386,6 +386,12 @@ export default function Home() {
                       <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
                       <p className="text-sm text-emerald-800 font-medium">Compte Google autorisé !</p>
                     </div>
+                    <Card className="border-amber-200 bg-amber-50">
+                      <CardContent className="p-3 text-xs space-y-1 text-amber-800">
+                        <p className="font-medium text-amber-900">⚠️ Important pour éviter le spam</p>
+                        <p>L&apos;email d&apos;expéditeur doit être <strong>exactement</strong> votre adresse Gmail utilisée pour l&apos;autorisation (celle avec laquelle vous vous êtes connecté sur Google).</p>
+                      </CardContent>
+                    </Card>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Nom de l&apos;expéditeur</Label>
@@ -393,7 +399,7 @@ export default function Home() {
                       </div>
                       <div className="space-y-2">
                         <Label>Email de l&apos;expéditeur</Label>
-                        <Input placeholder="contact@oqui.fr" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} />
+                        <Input placeholder="votre-email@gmail.com" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} />
                       </div>
                     </div>
                     <Button onClick={finalize} disabled={!fromEmail.trim()} className="w-full text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
