@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast'
 import {
   Mail, Send, Settings, Plus, X, CheckCircle2, XCircle,
   Loader2, Eye, History, RefreshCw, Trash2, ExternalLink,
-  Shield, Copy, Check,
+  Shield, Copy, Check, FileEdit, Users, ClipboardPaste,
 } from 'lucide-react'
 
 interface GmailCredentials {
@@ -49,6 +49,10 @@ export default function Home() {
   const [subject, setSubject] = useState('Retour de test utilisateur - OQUI')
   const [sending, setSending] = useState(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [emailHtml, setEmailHtml] = useState(DEFAULT_EMAIL_HTML)
+  const [showEditor, setShowEditor] = useState(false)
+  const [bulkMode, setBulkMode] = useState(false)
+  const [bulkText, setBulkText] = useState('')
   const { toast } = useToast()
 
   // Dialog state
@@ -72,6 +76,10 @@ export default function Home() {
     const hist = localStorage.getItem('oqui-history')
     if (hist) {
       try { setHistory(JSON.parse(hist)) } catch { /* ignore */ }
+    }
+    const tmpl = localStorage.getItem('oqui-email-template')
+    if (tmpl) {
+      try { setEmailHtml(tmpl) } catch { /* ignore */ }
     }
   }, [])
 
@@ -182,9 +190,11 @@ export default function Home() {
   }
 
   // Add/remove recipients
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
   const addRecipient = () => {
     const email = newEmail.trim()
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!email || !emailRegex.test(email)) {
       toast({ title: 'Email invalide', variant: 'destructive' })
       return
     }
@@ -194,6 +204,34 @@ export default function Home() {
     }
     setRecipients([...recipients, email])
     setNewEmail('')
+  }
+
+  const addBulkRecipients = () => {
+    const emails = bulkText
+      .split(/[\n,;\t]+/)
+      .map(e => e.trim())
+      .filter(e => emailRegex.test(e))
+    const unique = emails.filter(e => !recipients.includes(e))
+    if (unique.length === 0) {
+      toast({ title: 'Aucun email valide trouvé', variant: 'destructive' })
+      return
+    }
+    setRecipients([...recipients, ...unique])
+    setBulkText('')
+    setBulkMode(false)
+    toast({ title: `${unique.length} email(s) ajouté(s)` })
+  }
+
+  const resetTemplate = () => {
+    setEmailHtml(DEFAULT_EMAIL_HTML)
+    localStorage.removeItem('oqui-email-template')
+    toast({ title: 'Modèle réinitialisé' })
+  }
+
+  const saveTemplate = () => {
+    localStorage.setItem('oqui-email-template', emailHtml)
+    setShowEditor(false)
+    toast({ title: 'Modèle sauvegardé' })
   }
 
   // Send
@@ -207,6 +245,7 @@ export default function Home() {
         body: JSON.stringify({
           recipients,
           subject: subject.trim(),
+          html: emailHtml,
           clientId: creds.clientId,
           clientSecret: creds.clientSecret,
           refreshToken: creds.refreshToken,
@@ -408,15 +447,37 @@ export default function Home() {
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="space-y-4">
                 <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Destinataires</CardTitle>
-                    <CardDescription>Ajoutez les adresses email</CardDescription>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                    <div>
+                      <CardTitle className="text-base">Destinataires</CardTitle>
+                      <CardDescription>Ajoutez les adresses email</CardDescription>
+                    </div>
+                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setBulkMode(!bulkMode)}>
+                      <Users className="h-3.5 w-3.5" />
+                      {bulkMode ? 'Mode simple' : 'Ajout en masse'}
+                    </Button>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="flex gap-2">
-                      <Input placeholder="email@exemple.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRecipient() } }} />
-                      <Button variant="outline" size="icon" onClick={addRecipient} className="shrink-0" style={{ borderColor: '#0b3d2e', color: '#0b3d2e' }}><Plus className="h-4 w-4" /></Button>
-                    </div>
+                    {bulkMode ? (
+                      <div className="space-y-3">
+                        <textarea
+                          className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none font-mono"
+                          placeholder={"Collez vos emails ici, séparés par :&#10;- Sauts de ligne&#10;- Virgules&#10;- Points-virgules&#10;&#10;Exemple :&#10;alice@exemple.com&#10;bob@exemple.com, carla@exemple.com"}
+                          value={bulkText}
+                          onChange={(e) => setBulkText(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); addBulkRecipients() } }}
+                        />
+                        <Button onClick={addBulkRecipients} disabled={!bulkText.trim()} className="w-full text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
+                          <ClipboardPaste className="h-4 w-4" />
+                          Ajouter les emails
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Input placeholder="email@exemple.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRecipient() } }} />
+                        <Button variant="outline" size="icon" onClick={addRecipient} className="shrink-0" style={{ borderColor: '#0b3d2e', color: '#0b3d2e' }}><Plus className="h-4 w-4" /></Button>
+                      </div>
+                    )}
                     {recipients.length > 0 && (
                       <>
                         <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1">
@@ -444,15 +505,39 @@ export default function Home() {
                       <Input placeholder="Objet de l'email" value={subject} onChange={(e) => setSubject(e.target.value)} />
                     </div>
                     <div className="space-y-2">
-                      <Label>Modèle</Label>
-                      <div className="flex items-center gap-2 rounded-lg border p-3 bg-muted/30">
-                        <div className="w-8 h-8 rounded flex items-center justify-center shrink-0" style={{ backgroundColor: '#0b3d2e' }}><Mail className="h-4 w-4 text-white" /></div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium">Retour de test utilisateur - OQUI</p>
-                          <p className="text-xs text-muted-foreground">Modèle OQUI prédéfini</p>
-                        </div>
-                        <Badge variant="outline" className="shrink-0">Prêt</Badge>
+                      <div className="flex items-center justify-between">
+                        <Label>Modèle d&apos;email</Label>
+                        <Button variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => setShowEditor(!showEditor)}>
+                          <FileEdit className="h-3.5 w-3.5" />
+                          {showEditor ? 'Masquer l\'éditeur' : 'Modifier le HTML'}
+                        </Button>
                       </div>
+                      {showEditor ? (
+                        <div className="space-y-3">
+                          <textarea
+                            className="flex min-h-[250px] w-full rounded-md border border-input bg-zinc-900 text-zinc-100 px-3 py-2 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y font-mono leading-relaxed"
+                            value={emailHtml}
+                            onChange={(e) => setEmailHtml(e.target.value)}
+                          />
+                          <div className="flex gap-2">
+                            <Button onClick={saveTemplate} className="flex-1 text-white gap-1.5 text-sm" style={{ backgroundColor: '#0b3d2e' }}>
+                              <Check className="h-3.5 w-3.5" />Sauvegarder
+                            </Button>
+                            <Button variant="outline" onClick={resetTemplate} className="gap-1.5 text-sm text-destructive hover:text-destructive">
+                              <RefreshCw className="h-3.5 w-3.5" />Réinitialiser
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 rounded-lg border p-3 bg-muted/30">
+                          <div className="w-8 h-8 rounded flex items-center justify-center shrink-0" style={{ backgroundColor: '#0b3d2e' }}><Mail className="h-4 w-4 text-white" /></div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">{subject}</p>
+                            <p className="text-xs text-muted-foreground">{emailHtml === DEFAULT_EMAIL_HTML ? 'Modèle OQUI prédéfini' : 'Modèle personnalisé'}</p>
+                          </div>
+                          <Badge variant="outline" className="shrink-0">Prêt</Badge>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -474,7 +559,7 @@ export default function Home() {
                 </CardHeader>
                 <CardContent>
                   <div className="rounded-lg border overflow-hidden bg-muted/20" style={{ minHeight: 500 }}>
-                    <iframe srcDoc={EMAIL_HTML} title="Preview" className="w-full border-0" style={{ minHeight: 500 }} sandbox="allow-same-origin" />
+                    <iframe srcDoc={emailHtml} title="Preview" className="w-full border-0" style={{ minHeight: 500 }} sandbox="allow-same-origin" />
                   </div>
                 </CardContent>
               </Card>
@@ -541,7 +626,7 @@ export default function Home() {
   )
 }
 
-const EMAIL_HTML = `<!DOCTYPE html>
+const DEFAULT_EMAIL_HTML = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
 <table width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f4f5;padding:40px 0"><tr><td align="center">

@@ -16,7 +16,7 @@ function buildRawEmail(to: string, subject: string, fromName: string, fromEmail:
 
 export async function POST(request: NextRequest) {
   try {
-    const { recipients, subject, clientId, clientSecret, refreshToken, fromName, fromEmail } = await request.json();
+    const { recipients, subject, clientId, clientSecret, refreshToken, fromName, fromEmail, html } = await request.json();
 
     if (!recipients?.length || !subject) {
       return NextResponse.json({ error: "Destinataires et objet requis" }, { status: 400 });
@@ -24,6 +24,8 @@ export async function POST(request: NextRequest) {
     if (!clientId || !clientSecret || !refreshToken || !fromEmail) {
       return NextResponse.json({ error: "Configuration Gmail requise" }, { status: 400 });
     }
+
+    const emailHtml = html || OQUI_EMAIL_TEMPLATE;
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     for (const email of recipients) {
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     for (const recipient of recipients) {
       try {
-        const raw = buildRawEmail(recipient, subject, fromName || "OQUI", fromEmail, OQUI_EMAIL_TEMPLATE);
+        const raw = buildRawEmail(recipient, subject, fromName || "OQUI", fromEmail, emailHtml);
         await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
         results.push({ email: recipient, status: "sent" });
       } catch (err: unknown) {

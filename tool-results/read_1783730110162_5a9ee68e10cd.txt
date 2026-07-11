@@ -1,0 +1,565 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback } from 'react'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Input } from '@/components/ui/input'
+     6→import { Label } from '@/components/ui/label'
+     7→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+     8→import { Badge } from '@/components/ui/badge'
+     9→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+    10→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    11→import { ScrollArea } from '@/components/ui/scroll-area'
+    12→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    13→import { useToast } from '@/hooks/use-toast'
+    14→import {
+    15→  Mail, Send, Settings, Plus, X, CheckCircle2, XCircle,
+    16→  Loader2, Eye, History, RefreshCw, Trash2, ExternalLink,
+    17→  Shield, Copy, Check,
+    18→} from 'lucide-react'
+    19→
+    20→interface GmailCredentials {
+    21→  clientId: string
+    22→  clientSecret: string
+    23→  refreshToken: string
+    24→  fromName: string
+    25→  fromEmail: string
+    26→}
+    27→
+    28→interface SendResult {
+    29→  email: string
+    30→  status: string
+    31→  error?: string
+    32→}
+    33→
+    34→interface HistoryEntry {
+    35→  id: string
+    36→  recipient: string
+    37→  subject: string
+    38→  status: string
+    39→  error?: string
+    40→  date: string
+    41→}
+    42→
+    43→type Step = 'credentials' | 'code' | 'done'
+    44→
+    45→export default function Home() {
+    46→  const [creds, setCreds] = useState<GmailCredentials | null>(null)
+    47→  const [recipients, setRecipients] = useState<string[]>([])
+    48→  const [newEmail, setNewEmail] = useState('')
+    49→  const [subject, setSubject] = useState('Retour de test utilisateur - OQUI')
+    50→  const [sending, setSending] = useState(false)
+    51→  const [history, setHistory] = useState<HistoryEntry[]>([])
+    52→  const { toast } = useToast()
+    53→
+    54→  // Dialog state
+    55→  const [dialogOpen, setDialogOpen] = useState(false)
+    56→  const [step, setStep] = useState<Step>('credentials')
+    57→  const [clientId, setClientId] = useState('')
+    58→  const [clientSecret, setClientSecret] = useState('')
+    59→  const [authCode, setAuthCode] = useState('')
+    60→  const [fromName, setFromName] = useState("L'équipe OQUI")
+    61→  const [fromEmail, setFromEmail] = useState('')
+    62→  const [generating, setGenerating] = useState(false)
+    63→  const [exchanging, setExchanging] = useState(false)
+    64→  const [copied, setCopied] = useState(false)
+    65→
+    66→  // Load from localStorage
+    67→  useEffect(() => {
+    68→    const saved = localStorage.getItem('oqui-gmail-creds')
+    69→    if (saved) {
+    70→      try { setCreds(JSON.parse(saved)) } catch { /* ignore */ }
+    71→    }
+    72→    const hist = localStorage.getItem('oqui-history')
+    73→    if (hist) {
+    74→      try { setHistory(JSON.parse(hist)) } catch { /* ignore */ }
+    75→    }
+    76→  }, [])
+    77→
+    78→  const saveHistory = (entries: HistoryEntry[]) => {
+    79→    setHistory(entries)
+    80→    localStorage.setItem('oqui-history', JSON.stringify(entries.slice(0, 200)))
+    81→  }
+    82→
+    83→  // Generate auth URL
+    84→  const generateUrl = async () => {
+    85→    if (!clientId.trim() || !clientSecret.trim()) {
+    86→      toast({ title: 'Requis', description: 'Client ID et Client Secret sont requis', variant: 'destructive' })
+    87→      return
+    88→    }
+    89→    setGenerating(true)
+    90→    try {
+    91→      const res = await fetch('/api/gmail/auth-url', {
+    92→        method: 'POST',
+    93→        headers: { 'Content-Type': 'application/json' },
+    94→        body: JSON.stringify({ clientId: clientId.trim() }),
+    95→      })
+    96→      const data = await res.json()
+    97→      if (res.ok) {
+    98→        window.open(data.authUrl, '_blank')
+    99→        setStep('code')
+   100→        toast({ title: 'Fenêtre ouverte', description: 'Autorisez Gmail, puis copiez le code affiché.', duration: 8000 })
+   101→      } else {
+   102→        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
+   103→      }
+   104→    } catch {
+   105→      toast({ title: 'Erreur réseau', variant: 'destructive' })
+   106→    } finally {
+   107→      setGenerating(false)
+   108→    }
+   109→  }
+   110→
+   111→  // Exchange code for token
+   112→  const exchangeCode = async () => {
+   113→    if (!authCode.trim()) {
+   114→      toast({ title: 'Requis', description: 'Collez le code d\'autorisation', variant: 'destructive' })
+   115→      return
+   116→    }
+   117→    setExchanging(true)
+   118→    try {
+   119→      const res = await fetch('/api/gmail/exchange', {
+   120→        method: 'POST',
+   121→        headers: { 'Content-Type': 'application/json' },
+   122→        body: JSON.stringify({
+   123→          clientId: clientId.trim(),
+   124→          clientSecret: clientSecret.trim(),
+   125→          code: authCode.trim(),
+   126→          redirectUri: 'https://oqui-mailer.vercel.app/api/gmail/callback',
+   127→        }),
+   128→      })
+   129→      const data = await res.json()
+   130→      if (res.ok) {
+   131→        localStorage.setItem('oqui-gmail-client-id', clientId.trim())
+   132→        localStorage.setItem('oqui-gmail-client-secret', clientSecret.trim())
+   133→        localStorage.setItem('oqui-gmail-refresh-token', data.refreshToken)
+   134→        setStep('done')
+   135→      } else {
+   136→        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
+   137→      }
+   138→    } catch {
+   139→      toast({ title: 'Erreur réseau', variant: 'destructive' })
+   140→    } finally {
+   141→      setExchanging(false)
+   142→    }
+   143→  }
+   144→
+   145→  // Finalize
+   146→  const finalize = () => {
+   147→    if (!fromEmail.trim()) {
+   148→      toast({ title: 'Requis', description: 'L\'email d\'expéditeur est requis', variant: 'destructive' })
+   149→      return
+   150→    }
+   151→    const newCreds: GmailCredentials = {
+   152→      clientId: localStorage.getItem('oqui-gmail-client-id') || clientId.trim(),
+   153→      clientSecret: localStorage.getItem('oqui-gmail-client-secret') || clientSecret.trim(),
+   154→      refreshToken: localStorage.getItem('oqui-gmail-refresh-token') || '',
+   155→      fromName: fromName.trim() || "L'équipe OQUI",
+   156→      fromEmail: fromEmail.trim(),
+   157→    }
+   158→    localStorage.setItem('oqui-gmail-creds', JSON.stringify(newCreds))
+   159→    // Clean up temp keys
+   160→    localStorage.removeItem('oqui-gmail-client-id')
+   161→    localStorage.removeItem('oqui-gmail-client-secret')
+   162→    localStorage.removeItem('oqui-gmail-refresh-token')
+   163→    setCreds(newCreds)
+   164→    setDialogOpen(false)
+   165→    resetSetup()
+   166→    toast({ title: 'Connecté !', description: 'Votre compte Gmail est configuré.' })
+   167→  }
+   168→
+   169→  const disconnect = () => {
+   170→    localStorage.removeItem('oqui-gmail-creds')
+   171→    setCreds(null)
+   172→    toast({ title: 'Déconnecté' })
+   173→  }
+   174→
+   175→  const resetSetup = () => {
+   176→    setStep('credentials')
+   177→    setClientId(creds?.clientId || '')
+   178→    setClientSecret(creds?.clientSecret || '')
+   179→    setAuthCode('')
+   180→    setFromEmail(creds?.fromEmail || '')
+   181→    setFromName(creds?.fromName || "L'équipe OQUI")
+   182→  }
+   183→
+   184→  // Add/remove recipients
+   185→  const addRecipient = () => {
+   186→    const email = newEmail.trim()
+   187→    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+   188→      toast({ title: 'Email invalide', variant: 'destructive' })
+   189→      return
+   190→    }
+   191→    if (recipients.includes(email)) {
+   192→      toast({ title: 'Doublon', variant: 'destructive' })
+   193→      return
+   194→    }
+   195→    setRecipients([...recipients, email])
+   196→    setNewEmail('')
+   197→  }
+   198→
+   199→  // Send
+   200→  const sendEmails = async () => {
+   201→    if (!creds || recipients.length === 0 || !subject.trim()) return
+   202→    setSending(true)
+   203→    try {
+   204→      const res = await fetch('/api/send-email', {
+   205→        method: 'POST',
+   206→        headers: { 'Content-Type': 'application/json' },
+   207→        body: JSON.stringify({
+   208→          recipients,
+   209→          subject: subject.trim(),
+   210→          clientId: creds.clientId,
+   211→          clientSecret: creds.clientSecret,
+   212→          refreshToken: creds.refreshToken,
+   213→          fromName: creds.fromName,
+   214→          fromEmail: creds.fromEmail,
+   215→        }),
+   216→      })
+   217→      const data = await res.json()
+   218→      if (res.ok) {
+   219→        toast({ title: 'Emails envoyés', description: data.message })
+   220→        const newEntries: HistoryEntry[] = data.results.map((r: SendResult) => ({
+   221→          id: Date.now().toString() + Math.random().toString(36).slice(2),
+   222→          recipient: r.email,
+   223→          subject,
+   224→          status: r.status,
+   225→          error: r.error,
+   226→          date: new Date().toISOString(),
+   227→        }))
+   228→        saveHistory([...newEntries, ...history])
+   229→        setRecipients([])
+   230→      } else {
+   231→        toast({ title: 'Erreur', description: data.error, variant: 'destructive' })
+   232→      }
+   233→    } catch {
+   234→      toast({ title: 'Erreur réseau', variant: 'destructive' })
+   235→    } finally {
+   236→      setSending(false)
+   237→    }
+   238→  }
+   239→
+   240→  const openSetup = () => { resetSetup(); setDialogOpen(true) }
+   241→
+   242→  const formatDate = (d: string) => new Date(d).toLocaleString('fr-FR', {
+   243→    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+   244→  })
+   245→
+   246→  return (
+   247→    <div className="min-h-screen flex flex-col bg-zinc-50">
+   248→      <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur-md">
+   249→        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+   250→          <div className="flex items-center gap-3">
+   251→            <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#0b3d2e' }}>
+   252→              <Mail className="h-5 w-5 text-white" />
+   253→            </div>
+   254→            <div>
+   255→              <h1 className="text-lg font-bold leading-tight" style={{ color: '#0b3d2e' }}>OQUI Mailer</h1>
+   256→              <p className="text-xs text-muted-foreground hidden sm:block">Envoi d&apos;emails via Gmail API</p>
+   257→            </div>
+   258→          </div>
+   259→          <div className="flex items-center gap-2">
+   260→            {creds ? (
+   261→              <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50 gap-1.5">
+   262→                <CheckCircle2 className="h-3 w-3" />
+   263→                <span className="hidden sm:inline max-w-32 truncate">{creds.fromEmail}</span>
+   264→                <span className="sm:hidden">OK</span>
+   265→              </Badge>
+   266→            ) : (
+   267→              <Badge variant="outline" className="text-amber-700 border-amber-200 bg-amber-50 gap-1.5">
+   268→                <XCircle className="h-3 w-3" />
+   269→                Non connecté
+   270→              </Badge>
+   271→            )}
+   272→            <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) resetSetup() }}>
+   273→              <DialogTrigger asChild>
+   274→                <Button variant="outline" size="sm" className="gap-2" onClick={openSetup}>
+   275→                  <Settings className="h-4 w-4" />
+   276→                  <span className="hidden sm:inline">Configuration</span>
+   277→                </Button>
+   278→              </DialogTrigger>
+   279→              <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+   280→                <DialogHeader>
+   281→                  <DialogTitle className="flex items-center gap-2">
+   282→                    <Shield className="h-5 w-5" style={{ color: '#0b3d2e' }} />
+   283→                    Connexion Gmail
+   284→                  </DialogTitle>
+   285→                  <DialogDescription>
+   286→                    {step === 'credentials' && 'Renseignez vos identifiants Google Cloud.'}
+   287→                    {step === 'code' && 'Collez le code obtenu après autorisation.'}
+   288→                    {step === 'done' && 'Dernière étape : configurez l\'expéditeur.'}
+   289→                  </DialogDescription>
+   290→                </DialogHeader>
+   291→
+   292→                {step === 'credentials' && (
+   293→                  <div className="space-y-4 py-2">
+   294→                    <Card className="border-blue-100 bg-blue-50/50">
+   295→                      <CardContent className="p-3 text-xs space-y-1 text-blue-800">
+   296→                        <p className="font-medium text-blue-900">Préparation Google Cloud</p>
+   297→                        <ol className="list-decimal list-inside space-y-0.5">
+   298→                          <li>Allez sur la <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="underline">Console Google Cloud</a></li>
+   299→                          <li>Créez un <strong>OAuth 2.0 Client ID</strong> (type Web app)</li>
+   300→                          <li>Ajoutez <code className="bg-blue-100 px-1 rounded">https://oqui-mailer.vercel.app/api/gmail/callback</code> en URI de redirection</li>
+   301→                        </ol>
+   302→                      </CardContent>
+   303→                    </Card>
+   304→                    <div className="space-y-2">
+   305→                      <Label>Client ID</Label>
+   306→                      <Input placeholder="xxxx.apps.googleusercontent.com" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+   307→                    </div>
+   308→                    <div className="space-y-2">
+   309→                      <Label>Client Secret</Label>
+   310→                      <Input type="password" placeholder="GOCSPX-xxxxx" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
+   311→                    </div>
+   312→                    <Button onClick={generateUrl} disabled={generating || !clientId.trim() || !clientSecret.trim()} className="w-full text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
+   313→                      {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+   314→                      Se connecter avec Google
+   315→                    </Button>
+   316→                  </div>
+   317→                )}
+   318→
+   319→                {step === 'code' && (
+   320→                  <div className="space-y-4 py-2">
+   321→                    <div className="flex items-center gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+   322→                      <ExternalLink className="h-5 w-5 text-amber-600 shrink-0" />
+   323→                      <p className="text-xs text-amber-800">Après avoir autorisé l&apos;accès, copiez le code affiché sur la page de retour.</p>
+   324→                    </div>
+   325→                    <div className="space-y-2">
+   326→                      <Label>Code d&apos;autorisation</Label>
+   327→                      <textarea
+   328→                        className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+   329→                        placeholder="Collez le code ici..."
+   330→                        value={authCode}
+   331→                        onChange={(e) => setAuthCode(e.target.value)}
+   332→                      />
+   333→                    </div>
+   334→                    <div className="flex gap-2">
+   335→                      <Button variant="outline" onClick={() => setStep('credentials')}>Retour</Button>
+   336→                      <Button onClick={exchangeCode} disabled={exchanging || !authCode.trim()} className="flex-1 text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
+   337→                        {exchanging ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+   338→                        Valider le code
+   339→                      </Button>
+   340→                    </div>
+   341→                  </div>
+   342→                )}
+   343→
+   344→                {step === 'done' && (
+   345→                  <div className="space-y-4 py-2">
+   346→                    <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+   347→                      <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+   348→                      <p className="text-sm text-emerald-800 font-medium">Compte Google autorisé !</p>
+   349→                    </div>
+   350→                    <div className="grid grid-cols-2 gap-4">
+   351→                      <div className="space-y-2">
+   352→                        <Label>Nom de l&apos;expéditeur</Label>
+   353→                        <Input placeholder="L'équipe OQUI" value={fromName} onChange={(e) => setFromName(e.target.value)} />
+   354→                      </div>
+   355→                      <div className="space-y-2">
+   356→                        <Label>Email de l&apos;expéditeur</Label>
+   357→                        <Input placeholder="contact@oqui.fr" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} />
+   358→                      </div>
+   359→                    </div>
+   360→                    <Button onClick={finalize} disabled={!fromEmail.trim()} className="w-full text-white gap-2" style={{ backgroundColor: '#0b3d2e' }}>
+   361→                      <CheckCircle2 className="h-4 w-4" />
+   362→                      Enregistrer et activer
+   363→                    </Button>
+   364→                  </div>
+   365→                )}
+   366→
+   367→                {creds && (
+   368→                  <DialogFooter className="mt-3 pt-3 border-t">
+   369→                    <Button variant="outline" size="sm" className="text-destructive hover:text-destructive ml-auto" onClick={() => { disconnect(); setDialogOpen(false) }}>
+   370→                      <Trash2 className="h-4 w-4 mr-1" />Déconnecter
+   371→                    </Button>
+   372→                  </DialogFooter>
+   373→                )}
+   374→              </DialogContent>
+   375→            </Dialog>
+   376→          </div>
+   377→        </div>
+   378→      </header>
+   379→
+   380→      <main className="flex-1 max-w-6xl mx-auto w-full px-4 sm:px-6 py-6 sm:py-8">
+   381→        <Tabs defaultValue="compose" className="space-y-6">
+   382→          <TabsList className="grid w-full max-w-md grid-cols-2">
+   383→            <TabsTrigger value="compose" className="gap-2"><Send className="h-4 w-4" />Composer</TabsTrigger>
+   384→            <TabsTrigger value="history" className="gap-2">
+   385→              <History className="h-4 w-4" />Historique
+   386→              {history.length > 0 && <Badge variant="secondary" className="ml-1 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs">{history.length}</Badge>}
+   387→            </TabsTrigger>
+   388→          </TabsList>
+   389→
+   390→          <TabsContent value="compose" className="space-y-6">
+   391→            {!creds && (
+   392→              <Card className="border-amber-200 bg-amber-50">
+   393→                <CardContent className="flex items-start sm:items-center gap-3 p-4 flex-col sm:flex-row">
+   394→                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100">
+   395→                    <Shield className="h-5 w-5 text-amber-600" />
+   396→                  </div>
+   397→                  <div className="flex-1">
+   398→                    <p className="text-sm font-medium text-amber-800">Connexion Gmail requise</p>
+   399→                    <p className="text-xs text-amber-600">Connectez votre compte Google pour envoyer des emails.</p>
+   400→                  </div>
+   401→                  <Button variant="outline" size="sm" onClick={openSetup} className="border-amber-300 text-amber-700 hover:bg-amber-100 shrink-0">
+   402→                    <Shield className="h-4 w-4 mr-1" />Connecter
+   403→                  </Button>
+   404→                </CardContent>
+   405→              </Card>
+   406→            )}
+   407→
+   408→            <div className="grid gap-6 lg:grid-cols-2">
+   409→              <div className="space-y-4">
+   410→                <Card>
+   411→                  <CardHeader>
+   412→                    <CardTitle className="text-base">Destinataires</CardTitle>
+   413→                    <CardDescription>Ajoutez les adresses email</CardDescription>
+   414→                  </CardHeader>
+   415→                  <CardContent className="space-y-4">
+   416→                    <div className="flex gap-2">
+   417→                      <Input placeholder="email@exemple.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRecipient() } }} />
+   418→                      <Button variant="outline" size="icon" onClick={addRecipient} className="shrink-0" style={{ borderColor: '#0b3d2e', color: '#0b3d2e' }}><Plus className="h-4 w-4" /></Button>
+   419→                    </div>
+   420→                    {recipients.length > 0 && (
+   421→                      <>
+   422→                        <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto p-1">
+   423→                          {recipients.map((email) => (
+   424→                            <Badge key={email} variant="secondary" className="gap-1.5 py-1.5 px-3">
+   425→                              <Mail className="h-3 w-3" />{email}
+   426→                              <button onClick={() => setRecipients(recipients.filter((r) => r !== email))} className="ml-1 rounded-full hover:bg-muted-foreground/20 p-0.5"><X className="h-3 w-3" /></button>
+   427→                            </Badge>
+   428→                          ))}
+   429→                        </div>
+   430→                        <div className="flex items-center justify-between text-sm">
+   431→                          <span className="text-muted-foreground">{recipients.length} destinataire{recipients.length > 1 ? 's' : ''}</span>
+   432→                          <Button variant="ghost" size="sm" onClick={() => setRecipients([])} className="text-destructive hover:text-destructive text-xs">Tout supprimer</Button>
+   433→                        </div>
+   434→                      </>
+   435→                    )}
+   436→                  </CardContent>
+   437→                </Card>
+   438→
+   439→                <Card>
+   440→                  <CardHeader><CardTitle className="text-base">Détails</CardTitle></CardHeader>
+   441→                  <CardContent className="space-y-4">
+   442→                    <div className="space-y-2">
+   443→                      <Label>Objet</Label>
+   444→                      <Input placeholder="Objet de l'email" value={subject} onChange={(e) => setSubject(e.target.value)} />
+   445→                    </div>
+   446→                    <div className="space-y-2">
+   447→                      <Label>Modèle</Label>
+   448→                      <div className="flex items-center gap-2 rounded-lg border p-3 bg-muted/30">
+   449→                        <div className="w-8 h-8 rounded flex items-center justify-center shrink-0" style={{ backgroundColor: '#0b3d2e' }}><Mail className="h-4 w-4 text-white" /></div>
+   450→                        <div className="flex-1 min-w-0">
+   451→                          <p className="text-sm font-medium">Retour de test utilisateur - OQUI</p>
+   452→                          <p className="text-xs text-muted-foreground">Modèle OQUI prédéfini</p>
+   453→                        </div>
+   454→                        <Badge variant="outline" className="shrink-0">Prêt</Badge>
+   455→                      </div>
+   456→                    </div>
+   457→                  </CardContent>
+   458→                </Card>
+   459→
+   460→                <Card>
+   461→                  <CardContent className="p-4">
+   462→                    <Button onClick={sendEmails} disabled={sending || !creds || recipients.length === 0} className="w-full text-white gap-2 h-11" style={{ backgroundColor: '#0b3d2e' }}>
+   463→                      {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+   464→                      {sending ? 'Envoi en cours...' : `Envoyer à ${recipients.length} destinataire${recipients.length > 1 ? 's' : ''}`}
+   465→                    </Button>
+   466→                  </CardContent>
+   467→                </Card>
+   468→              </div>
+   469→
+   470→              <Card className="lg:sticky lg:top-24">
+   471→                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   472→                  <div><CardTitle className="text-base">Aperçu</CardTitle><CardDescription>Rendu de l&apos;email</CardDescription></div>
+   473→                  <Badge variant="outline" className="gap-1.5"><Eye className="h-3 w-3" />Preview</Badge>
+   474→                </CardHeader>
+   475→                <CardContent>
+   476→                  <div className="rounded-lg border overflow-hidden bg-muted/20" style={{ minHeight: 500 }}>
+   477→                    <iframe srcDoc={EMAIL_HTML} title="Preview" className="w-full border-0" style={{ minHeight: 500 }} sandbox="allow-same-origin" />
+   478→                  </div>
+   479→                </CardContent>
+   480→              </Card>
+   481→            </div>
+   482→          </TabsContent>
+   483→
+   484→          <TabsContent value="history">
+   485→            <Card>
+   486→              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+   487→                <div><CardTitle className="text-base">Historique</CardTitle><CardDescription>Vos envois d&apos;emails</CardDescription></div>
+   488→                <Button variant="outline" size="sm" className="gap-2 text-destructive hover:text-destructive" onClick={() => { saveHistory([]); toast({ title: 'Historique vidé' }) }}>
+   489→                  <Trash2 className="h-4 w-4" />Vider
+   490→                </Button>
+   491→              </CardHeader>
+   492→              <CardContent>
+   493→                {history.length === 0 ? (
+   494→                  <div className="text-center py-12">
+   495→                    <History className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
+   496→                    <p className="text-muted-foreground text-sm">Aucun email envoyé</p>
+   497→                  </div>
+   498→                ) : (
+   499→                  <ScrollArea className="max-h-96">
+   500→                    <Table>
+   501→                      <TableHeader>
+   502→                        <TableRow>
+   503→                          <TableHead>Destinataire</TableHead>
+   504→                          <TableHead className="hidden sm:table-cell">Objet</TableHead>
+   505→                          <TableHead>Statut</TableHead>
+   506→                          <TableHead className="hidden md:table-cell">Date</TableHead>
+   507→                        </TableRow>
+   508→                      </TableHeader>
+   509→                      <TableBody>
+   510→                        {history.map((r) => (
+   511→                          <TableRow key={r.id}>
+   512→                            <TableCell className="font-mono text-sm max-w-48 truncate">{r.recipient}</TableCell>
+   513→                            <TableCell className="hidden sm:table-cell text-sm max-w-48 truncate">{r.subject}</TableCell>
+   514→                            <TableCell>
+   515→                              {r.status === 'sent' ? (
+   516→                                <Badge variant="outline" className="text-emerald-700 border-emerald-200 bg-emerald-50 gap-1"><CheckCircle2 className="h-3 w-3" />Envoyé</Badge>
+   517→                              ) : (
+   518→                                <Badge variant="outline" className="text-red-700 border-red-200 bg-red-50 gap-1"><XCircle className="h-3 w-3" />Échoué</Badge>
+   519→                              )}
+   520→                            </TableCell>
+   521→                            <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{formatDate(r.date)}</TableCell>
+   522→                          </TableRow>
+   523→                        ))}
+   524→                      </TableBody>
+   525→                    </Table>
+   526→                  </ScrollArea>
+   527→                )}
+   528→              </CardContent>
+   529→            </Card>
+   530→          </TabsContent>
+   531→        </Tabs>
+   532→      </main>
+   533→
+   534→      <footer className="mt-auto border-t bg-white">
+   535→        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+   536→          <p className="text-xs text-muted-foreground">OQUI Mailer &mdash; Gmail API</p>
+   537→          <a href="https://oqui.duckdns.org" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:underline">oqui.duckdns.org</a>
+   538→        </div>
+   539→      </footer>
+   540→    </div>
+   541→  )
+   542→}
+   543→
+   544→const EMAIL_HTML = `<!DOCTYPE html>
+   545→<html><head><meta charset="UTF-8"></head>
+   546→<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
+   547→<table width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f4f5;padding:40px 0"><tr><td align="center">
+   548→<table width="600" cellspacing="0" cellpadding="0" border="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,.1)">
+   549→<tr><td align="center" style="background:#0b3d2e"><img src="https://z-cdn-media.chatglm.cn/files/c0f3e917-4773-46fc-8a83-d7db599025e3.png?auth_key=1883358409-403fd3c8509f48efb0171a21eb61f6fe-0-1e8aa7fdd04512546f62028abb9eb7f9" alt="OQUI" width="600" style="display:block;width:100%;max-width:600px;height:auto"></td></tr>
+   550→<tr><td style="padding:40px;color:#333;font-size:16px;line-height:1.6">
+   551→<p style="margin:0 0 20px">Bonjour,</p>
+   552→<p style="margin:0 0 20px">Merci pour l&apos;intérêt que vous portez à <strong style="color:#0b3d2e">OQUI</strong>.</p>
+   553→<p style="margin:0 0 20px">La phase de test utilisateur est désormais terminée. Nous vous invitons à partager vos retours afin de nous aider à améliorer la plateforme avant son lancement officiel.</p>
+   554→<table width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f0faf5;border-left:4px solid #0b3d2e;border-radius:4px;margin-bottom:20px"><tr><td style="padding:20px;color:#333;font-size:15px"><strong style="color:#0b3d2e;display:block;margin-bottom:8px">Devenir Partenaire</strong>En participant à cette évaluation, vous pourrez également manifester votre intérêt pour devenir partenaire d&apos;OQUI. Les partenaires sélectionnés pourront bénéficier d&apos;un <strong>compte certifié</strong> ou de l&apos;accès au rôle de <strong>rédacteur</strong>.</td></tr></table>
+   555→<p style="margin:0 0 30px">Nous vous invitons à remplir le formulaire suivant :</p>
+   556→</td></tr>
+   557→<tr><td align="center" style="padding-bottom:40px"><a href="https://docs.google.com/forms/d/e/1FAIpQLSeMJUOCsDKHu3R_YaZJsgEvjyyCDU0Y2z5jLLUnhTu4bWXwtQ/viewform?usp=dialog" target="_blank" style="background:#0b3d2e;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-weight:bold;font-size:16px;display:inline-block">Je participe au test</a></td></tr>
+   558→<tr><td style="padding:0 40px 40px;color:#333;font-size:16px;line-height:1.6;border-top:1px solid #eee">
+   559→<p style="margin:20px 0 0">Merci pour votre confiance et votre contribution au développement de OQUI.</p>
+   560→<p style="margin:10px 0 0"><strong style="color:#0b3d2e">L&apos;équipe OQUI</strong></p>
+   561→</td></tr>
+   562→</table>
+   563→<table width="600" cellspacing="0" cellpadding="0" border="0" style="margin-top:20px"><tr><td align="center" style="color:#888;font-size:12px"><a href="https://oqui.duckdns.org" target="_blank" style="color:#888;text-decoration:underline">oqui.duckdns.org</a></td></tr></table>
+   564→</td></tr></table>
+   565→</body></html>`
