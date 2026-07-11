@@ -1,35 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://oqui-mailer.vercel.app";
-const CALLBACK_PATH = "/api/gmail/callback";
 
-// POST - Generate OAuth2 authorization URL and store pending config
 export async function POST(request: NextRequest) {
   try {
-    const { clientId, clientSecret } = await request.json();
+    const { clientId } = await request.json();
+    if (!clientId) return NextResponse.json({ error: "Client ID requis" }, { status: 400 });
 
-    if (!clientId || !clientSecret) {
-      return NextResponse.json(
-        { error: "Client ID et Client Secret sont requis" },
-        { status: 400 }
-      );
-    }
-
-    // Store credentials as "pending" so the callback can use them
-    await db.gmailConfig.deleteMany({ where: { fromEmail: "pending" } });
-    await db.gmailConfig.create({
-      data: {
-        clientId,
-        clientSecret,
-        refreshToken: "", // will be filled by callback
-        fromEmail: "pending",
-        fromName: "pending",
-      },
-    });
-
-    const redirectUri = `${APP_URL}${CALLBACK_PATH}`;
-
+    const redirectUri = `${APP_URL}/api/gmail/callback`;
     const scopes = [
       "https://www.googleapis.com/auth/gmail.compose",
       "https://www.googleapis.com/auth/userinfo.profile",
@@ -43,11 +21,14 @@ export async function POST(request: NextRequest) {
       access_type: "offline",
       prompt: "consent",
       scope: scopes.join(" "),
+      // Encode state with client info so callback can find it
+      state: "oqui-mailer",
     });
 
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-
-    return NextResponse.json({ authUrl, redirectUri });
+    return NextResponse.json({
+      authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+      redirectUri,
+    });
   } catch {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }

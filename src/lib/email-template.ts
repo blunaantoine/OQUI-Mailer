@@ -4,33 +4,21 @@ export const OQUI_EMAIL_TEMPLATE = `<!DOCTYPE html>
     <meta charset="UTF-8">
 </head>
 <body style="margin: 0; padding: 0; background-color: #f4f4f5; font-family: Arial, sans-serif;">
-   
-    <!-- Conteneur principal -->
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f4f4f5; padding: 40px 0;">
         <tr>
             <td align="center">
-               
-                <!-- Carte blanche du mail -->
                 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                   
-                    <!-- Image d'en-tête -->
                     <tr>
                         <td align="center" style="background-color: #0b3d2e;">
                             <img src="https://z-cdn-media.chatglm.cn/files/c0f3e917-4773-46fc-8a83-d7db599025e3.png?auth_key=1883358409-403fd3c8509f48efb0171a21eb61f6fe-0-1e8aa7fdd04512546f62028abb9eb7f9" alt="OQUI Bannière" width="600" style="display: block; width: 100%; max-width: 600px; height: auto;">
                         </td>
                     </tr>
-
-                    <!-- Contenu du message -->
                     <tr>
                         <td style="padding: 40px 40px 20px 40px; color: #333333; font-size: 16px; line-height: 1.6;">
                             <p style="margin: 0 0 20px 0;">Bonjour,</p>
-                           
                             <p style="margin: 0 0 20px 0;">Merci pour l'intérêt que vous portez à <strong style="color: #0b3d2e;">OQUI</strong>.</p>
-                           
                             <p style="margin: 0 0 20px 0;">La phase de test utilisateur est désormais terminée.
                         Nous vous invitons à partager vos retours afin de nous aider à améliorer la plateforme avant son lancement officiel. Vos impressions, difficultés rencontrées et suggestions sont essentielles pour corriger les derniers détails et offrir une meilleure expérience.</p>
-
-                            <!-- Encart partenaire avec fond léger -->
                             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f0faf5; border-left: 4px solid #0b3d2e; border-radius: 4px; margin-bottom: 20px;">
                                 <tr>
                                     <td style="padding: 20px; color: #333333; font-size: 15px;">
@@ -39,29 +27,21 @@ export const OQUI_EMAIL_TEMPLATE = `<!DOCTYPE html>
                                     </td>
                                 </tr>
                             </table>
-
                             <p style="margin: 0 0 30px 0;">Nous vous invitons à remplir le formulaire suivant :</p>
                         </td>
                     </tr>
-
-                    <!-- Bouton Call-to-Action -->
                     <tr>
                         <td align="center" style="padding-bottom: 40px;">
                             <a href="https://docs.google.com/forms/d/e/1FAIpQLSeMJUOCsDKHu3R_YaZJsgEvjyyCDU0Y2z5jLLUnhTu4bWXwtQ/viewform?usp=dialog" target="_blank" style="background-color: #0b3d2e; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">Je participe au test </a>
                         </td>
                     </tr>
-
-                    <!-- Signature -->
                     <tr>
                         <td style="padding: 0 40px 40px 40px; color: #333333; font-size: 16px; line-height: 1.6; border-top: 1px solid #eeeeee;">
                             <p style="margin: 20px 0 0 0;">Merci pour votre confiance et votre contribution au développement de OQUI.</p>
                             <p style="margin: 10px 0 0 0;"><strong style="color: #0b3d2e;">L'équipe OQUI</strong></p>
                         </td>
                     </tr>
-                   
                 </table>
-               
-                <!-- Footer / Lien du site -->
                 <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="margin-top: 20px;">
                     <tr>
                         <td align="center" style="color: #888888; font-size: 12px;">
@@ -69,10 +49,8 @@ export const OQUI_EMAIL_TEMPLATE = `<!DOCTYPE html>
                         </td>
                     </tr>
                 </table>
-
             </td>
         </tr>
     </table>
-
 </body>
 </html>`;
